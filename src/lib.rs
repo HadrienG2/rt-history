@@ -35,7 +35,10 @@ impl<T: Copy + Sync> Input<T> {
     pub fn write(&mut self, input: &[T]) {
         // Check that the request makes sense
         let data_len = self.0.data_len();
-        assert!(input.len() <= data_len);
+        assert!(
+            input.len() <= data_len,
+            "History is shorted than provided input"
+        );
 
         // Notify the consumer that we are writing new data
         let old_writing = self.0.writing.load(Ordering::Relaxed);
@@ -101,7 +104,10 @@ impl<T: Copy + Sync> Output<T> {
     pub fn read_and_check_overrun(&self, output: &mut [T]) -> bool {
         // Check that the request makes sense
         let data_len = self.0.data_len();
-        assert!(output.len() <= data_len);
+        assert!(
+            output.len() <= data_len,
+            "History is shorter than requested output"
+        );
 
         // Check the timestamp of the last published data point, and make sure
         // this read is ordered before subsequent data reads
