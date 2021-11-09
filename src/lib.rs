@@ -33,6 +33,10 @@ pub struct Input<T: Copy + Sync>(Arc<SharedState<T>>);
 impl<T: Copy + Sync> Input<T> {
     /// Add some entries to the history log
     pub fn write(&mut self, input: &[T]) {
+        // Check that the request makes sense
+        let data_len = self.0.data_len();
+        assert!(input.len() <= data_len);
+
         // Notify the consumer that we are writing new data
         let old_writing = self.0.writing.load(Ordering::Relaxed);
         let new_writing = old_writing.wrapping_add(input.len());
@@ -42,7 +46,6 @@ impl<T: Copy + Sync> Input<T> {
         atomic::fence(Ordering::Release);
 
         // Wrap old and new writing timestamps into circular buffer range
-        let data_len = self.0.data_len();
         let old_writing_idx = old_writing % data_len;
         let new_writing_idx = new_writing % data_len;
 
@@ -96,6 +99,10 @@ impl<T: Copy + Sync> Output<T> {
     /// and its size should be increased.
     ///
     pub fn read_and_check_overrun(&self, output: &mut [T]) -> bool {
+        // Check that the request makes sense
+        let data_len = self.0.data_len();
+        assert!(output.len() <= data_len);
+
         // Check the timestamp of the last published data point, and make sure
         // this read is ordered before subsequent data reads
         let last_written = self.0.written.load(Ordering::Acquire);
@@ -104,7 +111,6 @@ impl<T: Copy + Sync> Output<T> {
         let first_written = last_written.wrapping_sub(output.len());
 
         // Wrap old and new timestamps into circular buffer range
-        let data_len = self.0.data_len();
         let last_written_idx = last_written % data_len;
         let first_written_idx = first_written % data_len;
 
