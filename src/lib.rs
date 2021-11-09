@@ -94,9 +94,9 @@ impl<T: Copy + Sync> Output<T> {
 
     /// Read the last N entries, tell if a buffer overrun occured
     ///
-    /// In the event of a negative result, output data will be corrupt in an
-    /// unspecified way. This means that the inner circular buffer is too small
-    /// and its size should be increased.
+    /// If this returns true, a buffer overrun occured, and output data will be
+    /// corrupt in an unspecified way. This means that the inner circular buffer
+    /// is too small and its size should be increased.
     ///
     pub fn read_and_check_overrun(&self, output: &mut [T]) -> bool {
         // Check that the request makes sense
