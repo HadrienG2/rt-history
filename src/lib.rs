@@ -1,3 +1,5 @@
+//! TODO: Add toplevel docs
+
 use atomic::{self, Atomic, Ordering};
 use std::sync::Arc;
 
