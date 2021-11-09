@@ -214,26 +214,32 @@ mod tests {
         TestResult::passed()
     }
 
-    macro_rules! checked_write {
-        ($write:expr, $input:expr) => {
-            if let Err(_) = panic::catch_unwind(AssertUnwindSafe(|| $input.write(&$write[..]))) {
-                assert!($write.len() > $input.0.data_len());
-                return TestResult::passed();
-            }
-            assert!($write.len() <= $input.0.data_len());
-        };
-    }
-
     #[quickcheck]
-    fn writes(min_entries: usize, write1: Vec<u32>, write2: Vec<u32>) -> TestResult {
+    fn writes_and_read(
+        min_entries: usize,
+        write1: Vec<u32>,
+        write2: Vec<u32>,
+        read_size: usize,
+    ) -> TestResult {
         // Reject impossibly large buffer configurations
         validate_min_entries!(min_entries);
+        validate_min_entries!(read_size);
 
         // Set up a history log
-        let (mut input, _output) = RTHistory::<u32>::new(min_entries).split();
+        let (mut input, output) = RTHistory::<u32>::new(min_entries).split();
 
         // Attempt a write, which will fail if and only if the input data is
         // larger than the history log's inner buffer.
+        macro_rules! checked_write {
+            ($write:expr, $input:expr) => {
+                if let Err(_) = panic::catch_unwind(AssertUnwindSafe(|| $input.write(&$write[..])))
+                {
+                    assert!($write.len() > $input.0.data_len());
+                    return TestResult::passed();
+                }
+                assert!($write.len() <= $input.0.data_len());
+            };
+        }
         checked_write!(write1, input);
 
         // Check the final buffer state
@@ -242,8 +248,8 @@ mod tests {
             .data
             .iter()
             .take(write1.len())
-            .zip(write1.iter().copied())
-            .all(|(a, x)| a.load(Ordering::Relaxed) == x));
+            .zip(&write1)
+            .all(|(a, &x)| a.load(Ordering::Relaxed) == x));
         assert!(input
             .0
             .data
@@ -252,6 +258,7 @@ mod tests {
             .all(|a| a.load(Ordering::Relaxed) == 0));
         assert_eq!(input.0.written.load(Ordering::Relaxed), write1.len());
         assert_eq!(input.0.writing.load(Ordering::Relaxed), write1.len());
+        assert_eq!(output.clock(), write1.len());
 
         // Perform another write, check state again
         checked_write!(write2, input);
@@ -263,24 +270,24 @@ mod tests {
             .data
             .iter()
             .take(overwritten)
-            .zip(write2[write2.len() - overwritten..].iter().copied())
-            .all(|(a, x2)| a.load(Ordering::Relaxed) == x2));
+            .zip(write2[write2.len() - overwritten..].iter())
+            .all(|(a, &x2)| a.load(Ordering::Relaxed) == x2));
         assert!(input
             .0
             .data
             .iter()
             .skip(overwritten)
             .take(write1.len().saturating_sub(overwritten))
-            .zip(write1.iter().copied().skip(overwritten))
-            .all(|(a, x1)| a.load(Ordering::Relaxed) == x1));
+            .zip(write1.iter().skip(overwritten))
+            .all(|(a, &x1)| a.load(Ordering::Relaxed) == x1));
         assert!(input
             .0
             .data
             .iter()
             .skip(write1.len())
             .take(write2.len())
-            .zip(write2)
-            .all(|(a, x2)| a.load(Ordering::Relaxed) == x2));
+            .zip(&write2)
+            .all(|(a, &x2)| a.load(Ordering::Relaxed) == x2));
         assert!(input
             .0
             .data
@@ -289,10 +296,57 @@ mod tests {
             .all(|a| a.load(Ordering::Relaxed) == 0));
         assert_eq!(input.0.written.load(Ordering::Relaxed), new_written);
         assert_eq!(input.0.writing.load(Ordering::Relaxed), new_written);
+        assert_eq!(output.clock(), new_written);
+
+        // Back up current ring buffer state
+        let data_backup = input
+            .0
+            .data
+            .iter()
+            .map(|a| a.load(Ordering::Relaxed))
+            .collect::<Box<[_]>>();
+
+        // Read some data back and make sure no overrun happened (it is
+        // impossible in single-threaded code)
+        let mut read = vec![0; read_size];
+        match panic::catch_unwind(AssertUnwindSafe(|| {
+            output.read_and_check_overrun(&mut read[..])
+        })) {
+            Err(_) => {
+                assert!(read.len() > output.0.data_len());
+                return TestResult::passed();
+            }
+            Ok(overrun) => {
+                assert!(read.len() <= output.0.data_len());
+                assert!(!overrun);
+            }
+        }
+
+        // Make sure that the "read" did not alter the history data
+        assert!(input
+            .0
+            .data
+            .iter()
+            .zip(data_backup.iter().copied())
+            .all(|(a, x)| a.load(Ordering::Relaxed) == x));
+        assert_eq!(input.0.written.load(Ordering::Relaxed), new_written);
+        assert_eq!(input.0.writing.load(Ordering::Relaxed), new_written);
+
+        // Check that the collected output is correct
+        assert!(read
+            .iter()
+            .rev()
+            .zip(
+                write2
+                    .iter()
+                    .rev()
+                    .chain(write1.iter().rev())
+                    .chain(std::iter::repeat(&0))
+            )
+            .all(|(&x, &y)| x == y));
+
         TestResult::passed()
     }
-
-    // TODO: Test more
 
     // TODO: Add ignored tests that test behavior in a multi-threaded scenario
 }
