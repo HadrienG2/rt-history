@@ -184,9 +184,42 @@ impl<T: Copy + Sync> RTHistory<T> {
 
 #[cfg(test)]
 mod tests {
-    #[test]
-    fn it_works() {
-        let result = 2 + 2;
-        assert_eq!(result, 4);
+    use super::*;
+    use quickcheck::TestResult;
+    use quickcheck_macros::quickcheck;
+
+    #[quickcheck]
+    fn new_split_clock(min_entries: usize) -> TestResult {
+        // Reject impossibly large configuraitons
+        if min_entries > 1024 * 1024 * 1024 {
+            return TestResult::discard();
+        }
+
+        // Check initial state
+        let history = RTHistory::<f32>::new(min_entries);
+        assert_eq!(history.0.data_len(), min_entries.next_power_of_two());
+        assert_eq!(history.0.data_len(), history.0.data.len());
+        assert!(history
+            .0
+            .data
+            .iter()
+            .map(|x| x.load(Ordering::Relaxed))
+            .all(|f| f == 0.0));
+        assert_eq!(history.0.written.load(Ordering::Relaxed), 0);
+        assert_eq!(history.0.writing.load(Ordering::Relaxed), 0);
+
+        // Split producer and consumer interface
+        let (input, output) = history.split();
+
+        // Check that they point to the same thing
+        assert_eq!(&*input.0 as *const _, &*output.0 as *const _);
+
+        // Check that the clock is initially 0 and doesn't increase just by
+        // repeatedly reading it.
+        assert_eq!(output.clock(), 0);
+        assert_eq!(output.clock(), 0);
+        TestResult::passed()
     }
+
+    // TODO: Test more
 }
