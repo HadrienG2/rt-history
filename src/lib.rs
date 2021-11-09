@@ -265,16 +265,14 @@ mod tests {
             .take(overwritten)
             .zip(write2[write2.len() - overwritten..].iter().copied())
             .all(|(a, x2)| a.load(Ordering::Relaxed) == x2));
-        if overwritten < write1.len() {
-            assert!(input
-                .0
-                .data
-                .iter()
-                .skip(overwritten)
-                .take(write1.len().saturating_sub(overwritten))
-                .zip(write1[overwritten..].iter().copied())
-                .all(|(a, x1)| a.load(Ordering::Relaxed) == x1));
-        }
+        assert!(input
+            .0
+            .data
+            .iter()
+            .skip(overwritten)
+            .take(write1.len().saturating_sub(overwritten))
+            .zip(write1.iter().copied().skip(overwritten))
+            .all(|(a, x1)| a.load(Ordering::Relaxed) == x1));
         assert!(input
             .0
             .data
@@ -283,14 +281,12 @@ mod tests {
             .take(write2.len())
             .zip(write2)
             .all(|(a, x2)| a.load(Ordering::Relaxed) == x2));
-        if new_written < data_len {
-            assert!(input
-                .0
-                .data
-                .iter()
-                .skip(new_written)
-                .all(|a| a.load(Ordering::Relaxed) == 0));
-        }
+        assert!(input
+            .0
+            .data
+            .iter()
+            .skip(new_written)
+            .all(|a| a.load(Ordering::Relaxed) == 0));
         assert_eq!(input.0.written.load(Ordering::Relaxed), new_written);
         assert_eq!(input.0.writing.load(Ordering::Relaxed), new_written);
         TestResult::passed()
