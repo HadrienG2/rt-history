@@ -53,23 +53,13 @@ impl<T: Copy + Sync> Input<T> {
         let new_writing_idx = new_writing % data_len;
 
         // Perform the data writes
-        if old_writing_idx <= new_writing_idx {
-            for (src, dst) in input
-                .iter()
-                .zip(&self.0.data[old_writing_idx..new_writing_idx])
-            {
-                // TODO: Check codegen. If it's bad, try volatile memcpy as an
-                //       alternative, but put this behind a feature flag because
-                //       it assumes backend store/load races are not UB.
-                dst.store(*src, Ordering::Relaxed);
-            }
-        } else {
-            let first_half = &self.0.data[old_writing_idx..];
-            let second_half = &self.0.data[..new_writing_idx];
-            for (src, dst) in input.iter().zip(first_half.iter().chain(second_half)) {
-                // TODO: See above
-                dst.store(*src, Ordering::Relaxed);
-            }
+        let first_half = &self.0.data[old_writing_idx..];
+        let second_half = &self.0.data[..new_writing_idx];
+        for (src, dst) in input.iter().zip(first_half.iter().chain(second_half)) {
+            // TODO: Check codegen. If it's bad, try volatile memcpy as an
+            //       alternative, but put this behind a feature flag because
+            //       it assumes backend store/load races are not UB.
+            dst.store(*src, Ordering::Relaxed);
         }
 
         // Notify the consumer that new data has been published, make sure that
@@ -121,21 +111,11 @@ impl<T: Copy + Sync> Output<T> {
         let first_written_idx = first_written % data_len;
 
         // Perform the data reads
-        if first_written_idx <= last_written_idx {
-            for (src, dst) in self.0.data[first_written_idx..last_written_idx]
-                .iter()
-                .zip(output.iter_mut())
-            {
-                // TODO: See above
-                *dst = src.load(Ordering::Relaxed);
-            }
-        } else {
-            let first_half = &self.0.data[first_written_idx..];
-            let second_half = &self.0.data[..last_written_idx];
-            for (src, dst) in first_half.iter().chain(second_half).zip(output.iter_mut()) {
-                // TODO: See above
-                *dst = src.load(Ordering::Relaxed);
-            }
+        let first_half = &self.0.data[first_written_idx..];
+        let second_half = &self.0.data[..last_written_idx];
+        for (src, dst) in first_half.iter().chain(second_half).zip(output.iter_mut()) {
+            // TODO: See above
+            *dst = src.load(Ordering::Relaxed);
         }
 
         // Make sure the producer did not concurrently overwrite our data.
