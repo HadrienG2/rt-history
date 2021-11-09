@@ -173,24 +173,31 @@ mod tests {
     use super::*;
     use quickcheck::TestResult;
     use quickcheck_macros::quickcheck;
+    use std::panic::{self, AssertUnwindSafe};
+
+    macro_rules! validate_min_entries {
+        ($min_entries:expr) => {
+            if $min_entries > 1024 * 1024 * 1024 {
+                return TestResult::discard();
+            }
+        };
+    }
 
     #[quickcheck]
     fn new_split_clock(min_entries: usize) -> TestResult {
-        // Reject impossibly large configuraitons
-        if min_entries > 1024 * 1024 * 1024 {
-            return TestResult::discard();
-        }
+        // Reject impossibly large buffer configuraitons
+        validate_min_entries!(min_entries);
 
         // Check initial state
         let history = RTHistory::<f32>::new(min_entries);
-        assert_eq!(history.0.data_len(), min_entries.next_power_of_two());
-        assert_eq!(history.0.data_len(), history.0.data.len());
         assert!(history
             .0
             .data
             .iter()
             .map(|x| x.load(Ordering::Relaxed))
             .all(|f| f == 0.0));
+        assert_eq!(history.0.data_len(), min_entries.next_power_of_two());
+        assert_eq!(history.0.data_len(), history.0.data.len());
         assert_eq!(history.0.written.load(Ordering::Relaxed), 0);
         assert_eq!(history.0.writing.load(Ordering::Relaxed), 0);
 
@@ -207,5 +214,89 @@ mod tests {
         TestResult::passed()
     }
 
+    macro_rules! checked_write {
+        ($write:expr, $input:expr) => {
+            if let Err(_) = panic::catch_unwind(AssertUnwindSafe(|| $input.write(&$write[..]))) {
+                assert!($write.len() > $input.0.data_len());
+                return TestResult::passed();
+            }
+            assert!($write.len() <= $input.0.data_len());
+        };
+    }
+
+    #[quickcheck]
+    fn writes(min_entries: usize, write1: Vec<u32>, write2: Vec<u32>) -> TestResult {
+        // Reject impossibly large buffer configurations
+        validate_min_entries!(min_entries);
+
+        // Set up a history log
+        let (mut input, _output) = RTHistory::<u32>::new(min_entries).split();
+
+        // Attempt a write, which will fail if and only if the input data is
+        // larger than the history log's inner buffer.
+        checked_write!(write1, input);
+
+        // Check the final buffer state
+        assert!(input
+            .0
+            .data
+            .iter()
+            .take(write1.len())
+            .zip(write1.iter().copied())
+            .all(|(a, x)| a.load(Ordering::Relaxed) == x));
+        assert!(input
+            .0
+            .data
+            .iter()
+            .skip(write1.len())
+            .all(|a| a.load(Ordering::Relaxed) == 0));
+        assert_eq!(input.0.written.load(Ordering::Relaxed), write1.len());
+        assert_eq!(input.0.writing.load(Ordering::Relaxed), write1.len());
+
+        // Perform another write, check state again
+        checked_write!(write2, input);
+        let new_written = write1.len() + write2.len();
+        let data_len = input.0.data_len();
+        let overwritten = new_written.saturating_sub(data_len);
+        assert!(input
+            .0
+            .data
+            .iter()
+            .take(overwritten)
+            .zip(write2[write2.len() - overwritten..].iter().copied())
+            .all(|(a, x2)| a.load(Ordering::Relaxed) == x2));
+        if overwritten < write1.len() {
+            assert!(input
+                .0
+                .data
+                .iter()
+                .skip(overwritten)
+                .take(write1.len().saturating_sub(overwritten))
+                .zip(write1[overwritten..].iter().copied())
+                .all(|(a, x1)| a.load(Ordering::Relaxed) == x1));
+        }
+        assert!(input
+            .0
+            .data
+            .iter()
+            .skip(write1.len())
+            .take(write2.len())
+            .zip(write2)
+            .all(|(a, x2)| a.load(Ordering::Relaxed) == x2));
+        if new_written < data_len {
+            assert!(input
+                .0
+                .data
+                .iter()
+                .skip(new_written)
+                .all(|a| a.load(Ordering::Relaxed) == 0));
+        }
+        assert_eq!(input.0.written.load(Ordering::Relaxed), new_written);
+        assert_eq!(input.0.writing.load(Ordering::Relaxed), new_written);
+        TestResult::passed()
+    }
+
     // TODO: Test more
+
+    // TODO: Add ignored tests that test behavior in a multi-threaded scenario
 }
