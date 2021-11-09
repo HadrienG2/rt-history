@@ -351,5 +351,10 @@ mod tests {
         TestResult::passed()
     }
 
-    // TODO: Add ignored tests that test behavior in a multi-threaded scenario
+    // TODO: Add ignored test of behavior in a multi-threaded scenario
+    //       Pick a scenario where overrun is very likely (write size = buffer
+    //       size) and check that overrun is properly detected, in the sense
+    //       that we do see some overrun, and when we don't see it the data is
+    //       correct. Use a regular pattern in the data (e.g. sequence of u64s)
+    //       to make the data check easier. Check with multiple consumers.
 }
