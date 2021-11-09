@@ -74,6 +74,7 @@ impl<T: Copy + Sync> Input<T> {
 }
 
 /// Consumer interface to the history log
+#[derive(Clone)]
 pub struct Output<T: Copy + Sync>(Arc<SharedState<T>>);
 //
 impl<T: Copy + Sync> Output<T> {
