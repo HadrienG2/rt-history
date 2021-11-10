@@ -13,7 +13,7 @@ struct SharedState<T: Copy + Sync> {
     data_len_pow2: u32,
 
     /// Timestamp of the last entry that has been published
-    written: Atomic<usize>,
+    readable: Atomic<usize>,
 
     /// Timestamp of the last entry that has been or is being overwritten
     writing: Atomic<usize>,
@@ -67,10 +67,47 @@ impl<T: Copy + Sync> Input<T> {
         // Notify the consumer that new data has been published, make sure that
         // this write is ordered after previous data writes
         if cfg!(debug_assertions) {
-            assert_eq!(self.0.written.load(Ordering::Relaxed), old_writing);
+            assert_eq!(self.0.readable.load(Ordering::Relaxed), old_writing);
         }
-        self.0.written.store(new_writing, Ordering::Release);
+        self.0.readable.store(new_writing, Ordering::Release);
     }
+}
+
+/// Number of entries that the producer wrote so far
+///
+/// Differences between two consecutive readouts of this counter can be used to
+/// tell how many new entries arrived between two readouts, and detect buffer
+/// underruns where the producer wrote too few data. How few is too few is
+/// workload-dependent, so we do not implement this logic ourselves.
+///
+/// This counter may wrap around from time to time, every couple of hours for a
+/// mono audio stream on a 32-bit CPU, so use wrapping_sub() for deltas.
+///
+pub type Clock = usize;
+
+/// Indication that a buffer overrun occured
+///
+/// This means that the producer wrote over the data that the consumer was in
+/// the process of reading. Possible fixes include making the buffer larger,
+/// speeding up the consumer, and slowing down the producer, in order of
+/// decreasing preference.
+///
+// TODO: Use thiserror to make this a real error type
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Overrun {
+    /// Number of entries that were fully written by the producer at the time
+    /// where the consumer started reading out data
+    pub clock: Clock,
+
+    /// Number of early history entries that were overwritten by the producer
+    /// while the consumer was in the process of reading out data.
+    ///
+    /// This can be higher than the number of entries which the consumer
+    /// requested. The intent is to provide a quantitative indication of how
+    /// late the consumer is with respect to the producer, so that the buffer
+    /// size can be increased by a matching amount if need be.
+    ///
+    pub excess_entries: Clock,
 }
 
 /// Consumer interface to the history log
@@ -78,23 +115,9 @@ impl<T: Copy + Sync> Input<T> {
 pub struct Output<T: Copy + Sync>(Arc<SharedState<T>>);
 //
 impl<T: Copy + Sync> Output<T> {
-    /// Check the current timestamp
-    ///
-    /// The wrapping_sub of two readings of clock() tells you how many new
-    /// entries have been written into the history between these readings.
-    ///
-    pub fn clock(&self) -> usize {
-        atomic::fence(Ordering::Acquire);
-        self.0.written.load(Ordering::Acquire)
-    }
-
-    /// Read the last N entries, tell if a buffer overrun occured
-    ///
-    /// If this returns true, a buffer overrun occured, and output data will be
-    /// corrupt in an unspecified way. This means that the inner circular buffer
-    /// is too small and its size should be increased.
-    ///
-    pub fn read_and_check_overrun(&self, output: &mut [T]) -> bool {
+    /// Read the last N entries, providing the associated timestamp and checking
+    /// for overruns
+    pub fn read(&self, output: &mut [T]) -> Result<Clock, Overrun> {
         // Check that the request makes sense
         let data_len = self.0.data_len();
         assert!(
@@ -104,18 +127,18 @@ impl<T: Copy + Sync> Output<T> {
 
         // Check the timestamp of the last published data point, and make sure
         // this read is ordered before subsequent data reads
-        let last_written = self.0.written.load(Ordering::Acquire);
+        let last_readable = self.0.readable.load(Ordering::Acquire);
 
         // Deduce the timestamp of the first data point that we're interested in
-        let first_written = last_written.wrapping_sub(output.len());
+        let first_readable = last_readable.wrapping_sub(output.len());
 
         // Wrap old and new timestamps into circular buffer range
-        let last_written_idx = last_written % data_len;
-        let first_written_idx = first_written % data_len;
+        let last_readable_idx = last_readable % data_len;
+        let first_readable_idx = first_readable % data_len;
 
         // Perform the data reads
-        let first_half = &self.0.data[first_written_idx..];
-        let second_half = &self.0.data[..last_written_idx];
+        let first_half = &self.0.data[first_readable_idx..];
+        let second_half = &self.0.data[..last_readable_idx];
         for (src, dst) in first_half.iter().chain(second_half).zip(output.iter_mut()) {
             // TODO: See above
             *dst = src.load(Ordering::Relaxed);
@@ -125,10 +148,18 @@ impl<T: Copy + Sync> Output<T> {
         // This overrun check must be ordered after the previous data reads.
         atomic::fence(Ordering::Acquire);
         let last_writing = self.0.writing.load(Ordering::Relaxed);
-        if first_written <= last_written {
-            last_writing >= first_written && last_writing < last_written
+        let excess_entries = last_writing
+            .wrapping_sub(first_readable)
+            .saturating_sub(data_len);
+
+        // Produce final result
+        if excess_entries > 0 {
+            Err(Overrun {
+                clock: last_readable,
+                excess_entries,
+            })
         } else {
-            last_writing >= first_written || last_writing < last_written
+            Ok(last_readable)
         }
     }
 }
@@ -139,9 +170,10 @@ pub struct RTHistory<T: Copy + Sync>(Arc<SharedState<T>>);
 impl<T: Copy + Default + Sync> RTHistory<T> {
     /// Build a history log that can hold a certain number of entries
     ///
-    /// To avoid data corruption (buffer overruns), the log must be larger than
-    /// the size of the largest read to be performed by the consumer. If you are
-    /// not tight on RAM a safe starting point is to make it three times larger.
+    /// To avoid data corruption (buffer overruns), the log must be
+    /// significantly larger than the size of the largest read to be performed
+    /// by the consumer. If you are not tight on RAM, a safe starting point is
+    /// to make it three times as large.
     ///
     /// For efficiency reason, the actual history buffer size will be rounded to
     /// the next power of two.
@@ -158,7 +190,7 @@ impl<T: Copy + Default + Sync> RTHistory<T> {
                 .take(data_len)
                 .collect(),
             data_len_pow2,
-            written: Atomic::<usize>::new(0),
+            readable: Atomic::<usize>::new(0),
             writing: Atomic::<usize>::new(0),
         }))
     }
@@ -201,7 +233,7 @@ mod tests {
             .all(|f| f == 0.0));
         assert_eq!(history.0.data_len(), min_entries.next_power_of_two());
         assert_eq!(history.0.data_len(), history.0.data.len());
-        assert_eq!(history.0.written.load(Ordering::Relaxed), 0);
+        assert_eq!(history.0.readable.load(Ordering::Relaxed), 0);
         assert_eq!(history.0.writing.load(Ordering::Relaxed), 0);
 
         // Split producer and consumer interface
@@ -210,10 +242,6 @@ mod tests {
         // Check that they point to the same thing
         assert_eq!(&*input.0 as *const _, &*output.0 as *const _);
 
-        // Check that the clock is initially 0 and doesn't increase just by
-        // repeatedly reading it.
-        assert_eq!(output.clock(), 0);
-        assert_eq!(output.clock(), 0);
         TestResult::passed()
     }
 
@@ -259,15 +287,14 @@ mod tests {
             .iter()
             .skip(write1.len())
             .all(|a| a.load(Ordering::Relaxed) == 0));
-        assert_eq!(input.0.written.load(Ordering::Relaxed), write1.len());
+        assert_eq!(input.0.readable.load(Ordering::Relaxed), write1.len());
         assert_eq!(input.0.writing.load(Ordering::Relaxed), write1.len());
-        assert_eq!(output.clock(), write1.len());
 
         // Perform another write, check state again
         checked_write!(write2, input);
-        let new_written = write1.len() + write2.len();
+        let new_readable = write1.len() + write2.len();
         let data_len = input.0.data_len();
-        let overwritten = new_written.saturating_sub(data_len);
+        let overwritten = new_readable.saturating_sub(data_len);
         assert!(input
             .0
             .data
@@ -295,11 +322,10 @@ mod tests {
             .0
             .data
             .iter()
-            .skip(new_written)
+            .skip(new_readable)
             .all(|a| a.load(Ordering::Relaxed) == 0));
-        assert_eq!(input.0.written.load(Ordering::Relaxed), new_written);
-        assert_eq!(input.0.writing.load(Ordering::Relaxed), new_written);
-        assert_eq!(output.clock(), new_written);
+        assert_eq!(input.0.readable.load(Ordering::Relaxed), new_readable);
+        assert_eq!(input.0.writing.load(Ordering::Relaxed), new_readable);
 
         // Back up current ring buffer state
         let data_backup = input
@@ -312,16 +338,14 @@ mod tests {
         // Read some data back and make sure no overrun happened (it is
         // impossible in single-threaded code)
         let mut read = vec![0; read_size];
-        match panic::catch_unwind(AssertUnwindSafe(|| {
-            output.read_and_check_overrun(&mut read[..])
-        })) {
+        match panic::catch_unwind(AssertUnwindSafe(|| output.read(&mut read[..]))) {
             Err(_) => {
                 assert!(read.len() > output.0.data_len());
                 return TestResult::passed();
             }
-            Ok(overrun) => {
+            Ok(result) => {
                 assert!(read.len() <= output.0.data_len());
-                assert!(!overrun);
+                assert_eq!(result, Ok(new_readable));
             }
         }
 
@@ -332,8 +356,8 @@ mod tests {
             .iter()
             .zip(data_backup.iter().copied())
             .all(|(a, x)| a.load(Ordering::Relaxed) == x));
-        assert_eq!(input.0.written.load(Ordering::Relaxed), new_written);
-        assert_eq!(input.0.writing.load(Ordering::Relaxed), new_written);
+        assert_eq!(input.0.readable.load(Ordering::Relaxed), new_readable);
+        assert_eq!(input.0.writing.load(Ordering::Relaxed), new_readable);
 
         // Check that the collected output is correct
         assert!(read
