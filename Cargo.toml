@@ -9,6 +9,14 @@ edition = "2021"
 atomic = { version = "0.5", default-features = false }
 
 [dev-dependencies]
+criterion = "0.3"
 quickcheck = "1.0"
 quickcheck_macros = "1.0"
 testbench = "0.8"
+
+[lib]
+bench = false
+
+[[bench]]
+name = "benchmark"
+harness = false
