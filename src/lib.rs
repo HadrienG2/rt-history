@@ -23,7 +23,7 @@ impl<T: Copy + Sync> SharedState<T> {
     /// Length of the inner circular buffer
     #[inline(always)]
     fn data_len(&self) -> usize {
-        let data_len = 1usize.pow(self.data_len_pow2);
+        let data_len = 1 << self.data_len_pow2;
         debug_assert_eq!(self.data.len(), data_len);
         data_len
     }
@@ -208,7 +208,10 @@ mod tests {
     use super::*;
     use quickcheck::TestResult;
     use quickcheck_macros::quickcheck;
-    use std::panic::{self, AssertUnwindSafe};
+    use std::{
+        panic::{self, AssertUnwindSafe},
+        sync::atomic::AtomicUsize,
+    };
 
     macro_rules! validate_min_entries {
         ($min_entries:expr) => {
@@ -375,10 +378,136 @@ mod tests {
         TestResult::passed()
     }
 
-    // TODO: Add ignored test of behavior in a multi-threaded scenario
-    //       Pick a scenario where overrun is very likely (write size = buffer
-    //       size) and check that overrun is properly detected, in the sense
-    //       that we do see some overrun, and when we don't see it the data is
-    //       correct. Use a regular pattern in the data (e.g. sequence of u64s)
-    //       to make the data check easier. Check with multiple consumers.
+    // This test is ignored because it needs a special configuration:
+    // - Be built in release mode
+    // - Be run on a machine with low background load
+    // - 2+ physical cores are needed to validate basic 1 producer / 1 consumer
+    //   operation, and 3+ physical cores to validate multi-consumer operation.
+    #[test]
+    #[ignore]
+    fn concurrent_test() {
+        const PRODUCER_SIZE: usize = 1 << 3; // One 64B cache line
+        const CONSUMER_SIZE: usize = PRODUCER_SIZE << 1; // To observe partial overrun
+        const BUFFER_SIZE: usize = CONSUMER_SIZE << 2; // 2x = too many overruns
+
+        const NUM_ELEMS: usize = 1 << 31;
+
+        let (mut input, output) = RTHistory::<u64>::new(BUFFER_SIZE).split();
+
+        // The producer simply emits regularly increasing counter values.
+        // This makes consumer validation as it means value == associated clock.
+        // It also regularly sleeps to trigger some buffer underruns.
+        let mut last_emitted = 0;
+        let producer = move || {
+            while last_emitted < NUM_ELEMS as u64 {
+                let mut buf = [0; PRODUCER_SIZE];
+                for dst in &mut buf {
+                    last_emitted += 1;
+                    *dst = last_emitted;
+                }
+                input.write(&buf[..]);
+            }
+        };
+
+        // Consumers detect underruns and overruns, and asserts that for data
+        // which has not been corrupted by an overrun, value == clock holds.
+        const XRUN_CTR_INIT: AtomicUsize = AtomicUsize::new(0);
+        let underrun_ctrs = [XRUN_CTR_INIT; 2];
+        let overrun_ctrs = [XRUN_CTR_INIT; 2];
+        let gen_consumer = |idx| {
+            let num_underruns: &AtomicUsize = &underrun_ctrs[idx];
+            let num_overruns: &AtomicUsize = &overrun_ctrs[idx];
+            let output = output.clone();
+            move || {
+                let mut last_clock = 0;
+                let mut last_underrun = usize::MAX;
+                let mut buf = [0; CONSUMER_SIZE];
+                while last_clock < NUM_ELEMS {
+                    // Fetch latest batch from producer, return clock and the
+                    // valid subset of data that hasn't been corrupted by a
+                    // buffer overrun.
+                    let (clock, valid) = match output.read(&mut buf[..]) {
+                        // In absence of overrun, all data is valid
+                        Ok(clock) => (clock, &buf[..]),
+
+                        // When an overrun occurs...
+                        Err(Overrun {
+                            clock,
+                            excess_entries,
+                        }) => {
+                            // Check the number of excess entries makes sense
+                            assert!(excess_entries > 0);
+                            assert_eq!(excess_entries % PRODUCER_SIZE, 0);
+
+                            // Keep track of number of overruns (increment does
+                            // not need to be atomic because the value will only
+                            // be read out in the end).
+                            num_overruns
+                                .store(num_overruns.load(Ordering::Relaxed) + 1, Ordering::Relaxed);
+
+                            // Extract valid subset of data
+                            if excess_entries < buf.len() {
+                                (clock, &buf[excess_entries + 1..])
+                            } else {
+                                (clock, &[][..])
+                            }
+                        }
+                    };
+
+                    // Monitor clock progression
+                    if clock == last_clock {
+                        // An unchanging clock means a buffer underrun occured,
+                        // make sure we only record each of them once.
+                        if clock != last_underrun {
+                            num_underruns.store(
+                                num_underruns.load(Ordering::Relaxed) + 1,
+                                Ordering::Relaxed,
+                            );
+                            last_underrun = clock;
+                        }
+                    } else {
+                        // The clock can only move forward
+                        assert!(clock > last_clock);
+                        last_clock = clock;
+                    }
+
+                    // Check that value == clock property is honored
+                    for (expected, &actual) in (1..=clock).rev().zip(valid.iter().rev()) {
+                        assert_eq!(expected as u64, actual);
+                    }
+                }
+            }
+        };
+
+        // Run the test
+        testbench::concurrent_test_3(producer, gen_consumer(0), gen_consumer(1));
+
+        // Check that a significant number of xruns were detected, but that
+        // there was a significant number of "normal" runs too.
+        const NUM_READOUTS: usize = NUM_ELEMS as usize / CONSUMER_SIZE;
+        underrun_ctrs
+            .into_iter()
+            .map(|a| a.load(Ordering::Relaxed))
+            .enumerate()
+            .for_each(|(idx, underrun_ctr)| {
+                println!(
+                    "consumer {}: {}/{} underruns",
+                    idx, underrun_ctr, NUM_READOUTS
+                );
+                assert!(underrun_ctr > NUM_READOUTS / 10000);
+                assert!(underrun_ctr < NUM_READOUTS / 10);
+            });
+        overrun_ctrs
+            .into_iter()
+            .map(|a| a.load(Ordering::Relaxed))
+            .enumerate()
+            .for_each(|(idx, overrun_ctr)| {
+                println!(
+                    "consumer {}: {}/{} overruns",
+                    idx, overrun_ctr, NUM_READOUTS
+                );
+                assert!(overrun_ctr > NUM_READOUTS / 10000);
+                assert!(overrun_ctr < NUM_READOUTS / 10);
+            });
+    }
 }

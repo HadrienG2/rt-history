@@ -11,3 +11,4 @@ atomic = { version = "0.5", default-features = false }
 [dev-dependencies]
 quickcheck = "1.0"
 quickcheck_macros = "1.0"
+testbench = "0.8"
