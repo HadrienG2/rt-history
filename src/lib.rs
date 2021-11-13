@@ -55,13 +55,27 @@ impl<T: Copy + Sync> Input<T> {
         let new_writing_idx = new_writing % data_len;
 
         // Perform the data writes
-        let first_half = &self.0.data[old_writing_idx..];
-        let second_half = &self.0.data[..new_writing_idx];
-        for (src, dst) in input.iter().zip(first_half.iter().chain(second_half)) {
-            // TODO: Check codegen. If it's bad, try volatile memcpy as an
-            //       alternative, but put this behind a feature flag because
-            //       it assumes backend store/load races are not UB.
+        let first_output_len = input.len().min(data_len - old_writing_idx);
+        let first_output = &self.0.data[old_writing_idx..old_writing_idx + first_output_len];
+        let (first_input, second_input) = input.split_at(first_output_len);
+        for (src, dst) in first_input.iter().zip(first_output.iter()) {
+            // NOTE: This compiles to a memcpy with N-bit granularity. More
+            //       performance can be obtained by using a regular memcpy,
+            //       which will fully leverage wide hardware instructions like
+            //       REP MOVS and SIMD load/stores. But unfortunately, racing
+            //       memcpys are also UB in the Rust memory model. So we'd need
+            //       to defer to the hardware memory model for this, which means
+            //       volatile memcpy, which is nightly-only.
             dst.store(*src, Ordering::Relaxed);
+        }
+        if first_output_len < input.len() {
+            debug_assert!(old_writing_idx >= new_writing_idx);
+            debug_assert_eq!(new_writing_idx, second_input.len());
+            let second_output = &self.0.data[..new_writing_idx];
+            for (src, dst) in second_input.iter().zip(second_output.iter()) {
+                // NOTE: See above
+                dst.store(*src, Ordering::Relaxed);
+            }
         }
 
         // Notify the consumer that new data has been published, make sure that
@@ -115,8 +129,7 @@ pub struct Overrun {
 pub struct Output<T: Copy + Sync>(Arc<SharedState<T>>);
 //
 impl<T: Copy + Sync> Output<T> {
-    /// Read the last N entries, providing the associated timestamp and checking
-    /// for overruns
+    /// Read the last N entries, provide their timestamp and check for overrun
     pub fn read(&self, output: &mut [T]) -> Result<Clock, Overrun> {
         // Check that the request makes sense
         let data_len = self.0.data_len();
@@ -137,11 +150,22 @@ impl<T: Copy + Sync> Output<T> {
         let first_readable_idx = first_readable % data_len;
 
         // Perform the data reads
-        let first_half = &self.0.data[first_readable_idx..];
-        let second_half = &self.0.data[..last_readable_idx];
-        for (src, dst) in first_half.iter().chain(second_half).zip(output.iter_mut()) {
-            // TODO: See above
+        let output_len = output.len();
+        let first_input_len = output_len.min(data_len - first_readable_idx);
+        let first_input = &self.0.data[first_readable_idx..first_readable_idx + first_input_len];
+        let (first_output, second_output) = output.split_at_mut(first_input_len);
+        for (src, dst) in first_input.iter().zip(first_output.iter_mut()) {
+            // NOTE: See write()
             *dst = src.load(Ordering::Relaxed);
+        }
+        if first_input_len < output_len {
+            debug_assert!(first_readable_idx >= last_readable_idx);
+            debug_assert_eq!(last_readable_idx, second_output.len());
+            let second_input = &self.0.data[..last_readable_idx];
+            for (src, dst) in second_input.iter().zip(second_output.iter_mut()) {
+                // NOTE: See write()
+                *dst = src.load(Ordering::Relaxed);
+            }
         }
 
         // Make sure the producer did not concurrently overwrite our data.
