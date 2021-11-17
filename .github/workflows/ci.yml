@@ -160,12 +160,6 @@ jobs:
         with:
           command: test
 
-      - name: Run concurrent tests
-        uses: actions-rs/cargo@v1
-        with:
-          command: test
-          args: --release -- --ignored --nocapture --test-threads=1
-
 
   # Variant of the test-stable job for unstable periodical builds
   #
@@ -212,9 +206,3 @@ jobs:
         uses: actions-rs/cargo@v1
         with:
           command: test
-
-      - name: Run concurrent tests
-        uses: actions-rs/cargo@v1
-        with:
-          command: test
-          args: --release -- --ignored --nocapture --test-threads=1
