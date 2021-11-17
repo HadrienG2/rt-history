@@ -26,7 +26,6 @@ conditions can occur:
   timestamp, but we do not handle it ourselves.
 
 ```rust
-# use rt_history::RTHistory;
 let (mut input, output) = RTHistory::<u8>::new(8).split();
 
 let in_buf = [1, 2, 3];
