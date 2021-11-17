@@ -1,5 +1,24 @@
-//! A bounded wait-free primitive to record the time evolution of some data and
-//! be able to query the last N data points, with error-checking capabilities.
+//! An RT-safe history log with error checking.
+//!
+//! This is a bounded wait-free thread synchronization primitive which allows
+//! you to record the time evolution of some data on one thread and be able to
+//! query the last N data points on other threads.
+//!
+//! By definition of wait-free synchronization, the producer and consumer
+//! threads cannot wait for each other, so in bad conditions (too small a buffer
+//! size, too low a thread's priority, too loaded a system...), two race
+//! conditions can occur:
+//!
+//! - The producer can be too fast with respect to consumers, and overwrite
+//!   historical data which a consumer was still in the process of reading.
+//!   This buffer overrun scenario is reported, along with the degree of overrun
+//!   that occurred, which can be used to guide system parameter adjustments so
+//!   that the error stops occurring.
+//! - The producer can be too slow with respect to consumers, and fail to write
+//!   a sufficient amount of new data inbetween two consumer readouts. The
+//!   precise definition of this buffer underrun error is workload-dependent, so
+//!   we provide the right tool to detect it in the form of a latest data point
+//!   timestamp, but we do not handle it ourselves.
 //!
 //! ```
 //! # use rt_history::RTHistory;
@@ -9,7 +28,7 @@
 //! input.write(&in_buf[..]);
 //!
 //! let mut out_buf = [0; 3];
-//! output.read(&mut out_buf[..]);
+//! assert_eq!(output.read(&mut out_buf[..]), Ok(3));
 //! assert_eq!(in_buf, out_buf);
 //! ```
 
