@@ -68,8 +68,12 @@ impl<T: Copy + Sync> SharedState<T> {
 pub struct Input<T: Copy + Sync>(Arc<SharedState<T>>);
 //
 impl<T: Copy + Sync> Input<T> {
-    /// Query the buffer length
-    pub fn len(&self) -> usize {
+    /// Query the history capacity
+    ///
+    /// Once this number of entries has been recorded, subsequent writes will
+    /// overwrite old entries in a FIFO manner.
+    ///
+    pub fn capacity(&self) -> usize {
         self.0.data_len()
     }
 
@@ -172,8 +176,12 @@ pub struct Overrun {
 pub struct Output<T: Copy + Sync>(Arc<SharedState<T>>);
 //
 impl<T: Copy + Sync> Output<T> {
-    /// Query the buffer length
-    pub fn len(&self) -> usize {
+    /// Query the history capacity
+    ///
+    /// Once this number of entries has been recorded, subsequent writes will
+    /// overwrite old entries in a FIFO manner.
+    ///
+    pub fn capacity(&self) -> usize {
         self.0.data_len()
     }
 
@@ -280,8 +288,12 @@ impl<T: Copy + Default + Sync> RTHistory<T> {
 }
 //
 impl<T: Copy + Sync> RTHistory<T> {
-    /// Query the buffer length
-    pub fn len(&self) -> usize {
+    /// Query the history capacity
+    ///
+    /// Once this number of entries has been recorded, subsequent writes will
+    /// overwrite old entries in a FIFO manner.
+    ///
+    pub fn capacity(&self) -> usize {
         self.0.data_len()
     }
 
