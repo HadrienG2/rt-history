@@ -1,7 +1,23 @@
-//! TODO: Add toplevel docs
+//! A bounded wait-free primitive to record the time evolution of some data and
+//! be able to query the last N data points, with error-checking capabilities.
+//!
+//! ```
+//! # use rt_history::RTHistory;
+//! let (mut input, output) = RTHistory::<u8>::new(8).split();
+//!
+//! let in_buf = [1, 2, 3];
+//! input.write(&in_buf[..]);
+//!
+//! let mut out_buf = [0; 3];
+//! output.read(&mut out_buf[..]);
+//! assert_eq!(in_buf, out_buf);
+//! ```
+
+#![deny(missing_docs)]
 
 use atomic::{self, Atomic, Ordering};
 use std::sync::Arc;
+use thiserror::Error;
 
 /// Data that is shared between the producer and the consumer
 struct SharedState<T: Copy + Sync> {
@@ -33,7 +49,15 @@ impl<T: Copy + Sync> SharedState<T> {
 pub struct Input<T: Copy + Sync>(Arc<SharedState<T>>);
 //
 impl<T: Copy + Sync> Input<T> {
-    /// Add some entries to the history log
+    /// Query the buffer length
+    pub fn len(&self) -> usize {
+        self.0.data_len()
+    }
+
+    /// Record new entries into the history log
+    ///
+    /// `input` must be shorter than the buffer length.
+    ///
     pub fn write(&mut self, input: &[T]) {
         // Check that the request makes sense
         let data_len = self.0.data_len();
@@ -87,7 +111,7 @@ impl<T: Copy + Sync> Input<T> {
     }
 }
 
-/// Number of entries that the producer wrote so far
+/// Number of entries that the producer wrote so far (with wraparound)
 ///
 /// Differences between two consecutive readouts of this counter can be used to
 /// tell how many new entries arrived between two readouts, and detect buffer
@@ -95,7 +119,7 @@ impl<T: Copy + Sync> Input<T> {
 /// workload-dependent, so we do not implement this logic ourselves.
 ///
 /// This counter may wrap around from time to time, every couple of hours for a
-/// mono audio stream on a 32-bit CPU, so use wrapping_sub() for deltas.
+/// mono audio stream on a 32-bit CPU. Use wrapping_sub() for deltas.
 ///
 pub type Clock = usize;
 
@@ -106,8 +130,8 @@ pub type Clock = usize;
 /// speeding up the consumer, and slowing down the producer, in order of
 /// decreasing preference.
 ///
-// TODO: Use thiserror to make this a real error type
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Error, PartialEq, Eq)]
+#[error("A buffer overrun occured while reading history of entry {clock}, writer overwrote {excess_entries} entries")]
 pub struct Overrun {
     /// Number of entries that were fully written by the producer at the time
     /// where the consumer started reading out data
@@ -129,7 +153,23 @@ pub struct Overrun {
 pub struct Output<T: Copy + Sync>(Arc<SharedState<T>>);
 //
 impl<T: Copy + Sync> Output<T> {
-    /// Read the last N entries, provide their timestamp and check for overrun
+    /// Query the buffer length
+    pub fn len(&self) -> usize {
+        self.0.data_len()
+    }
+
+    /// Read the last N entries, check timestamp and errors
+    ///
+    /// `output` must be shorter than the buffer length.
+    ///
+    /// On successful readout, this method returns the timestamp of the latest
+    /// entry, which can be used to check how many samples were written by the
+    /// producer since the previous readout.
+    ///
+    /// If the producer overwrote some of the entries that were read (a scenario
+    /// known as a buffer overrun, this error is reported, along with an
+    /// indication of how late the consumer is with respect to the producer).
+    ///
     pub fn read(&self, output: &mut [T]) -> Result<Clock, Overrun> {
         // Check that the request makes sense
         let data_len = self.0.data_len();
@@ -221,6 +261,11 @@ impl<T: Copy + Default + Sync> RTHistory<T> {
 }
 //
 impl<T: Copy + Sync> RTHistory<T> {
+    /// Query the buffer length
+    pub fn len(&self) -> usize {
+        self.0.data_len()
+    }
+
     /// Split the history log into a producer and consumer interface
     pub fn split(self) -> (Input<T>, Output<T>) {
         (Input(self.0.clone()), Output(self.0))
