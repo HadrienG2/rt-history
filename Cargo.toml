@@ -1,14 +1,29 @@
 [package]
+#
+# Release checklist:
+#
+# - Check all TODOs, FIXMEs, unwraps, and expects: can I do better now?
+# - Cross-check all public API documentation, update as needed
+# - Update changelog
+# - Update version number in Cargo.toml
+# - Push master, make sure it passes CI
+# - Cargo publish
+# - Roll an annotated git tag
+# - Add a github release
+#
 name = "rt-history"
 version = "1.0.0"
 edition = "2021"
 authors = ["Hadrien G. <knights_of_ni@gmx.com>"]
-rust-version = "1.56.1"
+rust-version = "1.56"
 description = "An RT-safe history log with error checking"
 repository = "https://github.com/HadrienG2/rt-history"
 license = "MPL-2.0"
 keywords = [ "wait-free", "real-time", "synchronization", "history", "lock-free" ]
 categories = [ "concurrency", "data-structures" ]
+
+[badges]
+maintenance = { status = "passively-maintained" }
 
 [dependencies]
 atomic = { version = "0.5", default-features = false }
