@@ -33,7 +33,7 @@ thiserror = "1.0"
 criterion = "0.3"
 quickcheck = "1.0"
 quickcheck_macros = "1.0"
-testbench = "0.8"
+testbench = "0.9"
 
 [lib]
 bench = false
