@@ -83,8 +83,9 @@ jobs:
       - name: Run basic tests
         run: cargo test
 
-      - name: Run concurrent tests and benchmarks
-        run: cargo test --release -- --ignored --nocapture --test-threads=1
+      # FIXME: Disable concurrent testing as github runners don't have enough cores
+      # - name: Run concurrent tests and benchmarks
+      #   run: cargo test --release -- --ignored --nocapture --test-threads=1
 
 
   # Check compatibility with newer Rust/deps versions (scheduled CI)
@@ -120,5 +121,6 @@ jobs:
       - name: Run basic tests
         run: cargo test
 
-      - name: Run concurrent tests and benchmarks
-        run: cargo test --release -- --ignored --nocapture --test-threads=1
+      # FIXME: Disable concurrent testing as github runners don't have enough cores
+      # - name: Run concurrent tests and benchmarks
+      #   run: cargo test --release -- --ignored --nocapture --test-threads=1
