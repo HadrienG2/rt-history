@@ -86,7 +86,7 @@ impl<T: Copy + Sync> Input<T> {
         let data_len = self.0.data_len();
         assert!(
             input.len() <= data_len,
-            "History is shorted than provided input"
+            "History is shorter than provided input"
         );
 
         // Notify the consumer that we are writing new data
