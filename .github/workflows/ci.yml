@@ -75,7 +75,7 @@ jobs:
           - macos-latest
         rust:
           - stable
-          - 1.60.0  # Minimum supported Rust version
+          - 1.64.0  # Minimum supported Rust version
 
     steps:
       - name: Checkout sources
@@ -113,7 +113,7 @@ jobs:
         rust:
           - beta
           - nightly
-          - 1.60.0  # Minimum supported Rust version (can be broken by deps)
+          - 1.64.0  # Minimum supported Rust version (can be broken by deps)
 
     steps:
       - name: Checkout sources
