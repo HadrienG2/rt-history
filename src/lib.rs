@@ -56,7 +56,7 @@ struct SharedState<T: Copy + Sync> {
 //
 impl<T: Copy + Sync> SharedState<T> {
     /// Length of the inner circular buffer
-    #[inline(always)]
+    #[inline]
     fn data_len(&self) -> usize {
         let data_len = 1 << self.data_len_pow2;
         debug_assert_eq!(self.data.len(), data_len);
