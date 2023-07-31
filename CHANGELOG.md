@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 - Bumped MSRV to 1.64 per new criterion requirements.
+- Strengthened bound to `T: NoUninit` from bytemuck, since the former `T: Copy`
+  bound was unsound and is thus not accepted by `atomic` anymore.
 
 
 ## [2.0.0] - 2023-02-16

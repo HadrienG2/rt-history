@@ -35,11 +35,15 @@
 #![deny(missing_docs)]
 
 use atomic::{self, Atomic, Ordering};
+use bytemuck::NoUninit;
 use std::sync::Arc;
 use thiserror::Error;
 
+/// Re-export of the bytemuck version used by this crate
+pub use bytemuck;
+
 /// Data that is shared between the producer and the consumer
-struct SharedState<T: Copy + Sync> {
+struct SharedState<T: NoUninit + Sync> {
     /// Circular buffer
     data: Box<[Atomic<T>]>,
 
@@ -54,7 +58,7 @@ struct SharedState<T: Copy + Sync> {
     writing: Atomic<usize>,
 }
 //
-impl<T: Copy + Sync> SharedState<T> {
+impl<T: NoUninit + Sync> SharedState<T> {
     /// Length of the inner circular buffer
     #[inline]
     fn data_len(&self) -> usize {
@@ -65,9 +69,9 @@ impl<T: Copy + Sync> SharedState<T> {
 }
 
 /// Producer interface to the history log
-pub struct Input<T: Copy + Sync>(Arc<SharedState<T>>);
+pub struct Input<T: NoUninit + Sync>(Arc<SharedState<T>>);
 //
-impl<T: Copy + Sync> Input<T> {
+impl<T: NoUninit + Sync> Input<T> {
     /// Query the history capacity
     ///
     /// Once this number of entries has been recorded, subsequent writes will
@@ -173,9 +177,9 @@ pub struct Overrun {
 
 /// Consumer interface to the history log
 #[derive(Clone)]
-pub struct Output<T: Copy + Sync>(Arc<SharedState<T>>);
+pub struct Output<T: NoUninit + Sync>(Arc<SharedState<T>>);
 //
-impl<T: Copy + Sync> Output<T> {
+impl<T: NoUninit + Sync> Output<T> {
     /// Query the history capacity
     ///
     /// Once this number of entries has been recorded, subsequent writes will
@@ -256,9 +260,9 @@ impl<T: Copy + Sync> Output<T> {
 }
 
 /// A realtime-safe (bounded wait-free) history log
-pub struct RTHistory<T: Copy + Sync>(Arc<SharedState<T>>);
+pub struct RTHistory<T: NoUninit + Sync>(Arc<SharedState<T>>);
 //
-impl<T: Copy + Default + Sync> RTHistory<T> {
+impl<T: NoUninit + Default + Sync> RTHistory<T> {
     /// Build a history log that can hold a certain number of entries
     ///
     /// To avoid data corruption (buffer overruns), the log must be
@@ -287,7 +291,7 @@ impl<T: Copy + Default + Sync> RTHistory<T> {
     }
 }
 //
-impl<T: Copy + Sync> RTHistory<T> {
+impl<T: NoUninit + Sync> RTHistory<T> {
     /// Query the history capacity
     ///
     /// Once this number of entries has been recorded, subsequent writes will
