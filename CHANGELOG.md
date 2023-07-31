@@ -8,7 +8,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+_No unreleased changes in the pipeline at the moment_
+
+
+## [3.0.0] - 2023-07-31
+
+### Changed
+
 - Bumped MSRV to 1.64 per new criterion requirements.
+
+### Fixed 
+
 - Strengthened bound to `T: NoUninit` from bytemuck, since the former `T: Copy`
   bound was unsound and is thus not accepted by `atomic` anymore.
 
@@ -29,6 +39,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 
 
-[Unreleased]: https://github.com/HadrienG2/triple-buffer/compare/v2.0.0...HEAD
+[Unreleased]: https://github.com/HadrienG2/triple-buffer/compare/v3.0.0...HEAD
+[3.0.0]: https://github.com/HadrienG2/triple-buffer/compare/v2.0.0...v3.0.0
 [2.0.0]: https://github.com/HadrienG2/triple-buffer/compare/v1.0.0...v2.0.0
 [1.0.0]: https://github.com/HadrienG2/triple-buffer/releases/tag/v1.0.0
