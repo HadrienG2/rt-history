@@ -1,5 +1,6 @@
 # rt-history: An RT-safe history log with error checking
 
+[![MPLv2 licensed](https://img.shields.io/badge/license-MPLv2-blue.svg)](./LICENSE)
 [![On crates.io](https://img.shields.io/crates/v/rt-history.svg)](https://crates.io/crates/rt-history)
 [![On docs.rs](https://docs.rs/rt-history/badge.svg)](https://docs.rs/rt-history/)
 [![Continuous Integration](https://img.shields.io/github/actions/workflow/status/HadrienG2/rt-history/ci.yml?branch=master)](https://github.com/HadrienG2/rt-history/actions?query=workflow%3A%22Continuous+Integration%22)
