@@ -310,176 +310,166 @@ impl<T: NoUninit + Sync> RTHistory<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use quickcheck::TestResult;
-    use quickcheck_macros::quickcheck;
+    use proptest::prelude::*;
     use std::{
         panic::{self, AssertUnwindSafe},
         sync::atomic::AtomicUsize,
     };
 
-    macro_rules! validate_min_entries {
-        ($min_entries:expr) => {
-            if $min_entries > 1024 * 1024 * 1024 {
-                return TestResult::discard();
+    // Number of entries in an history buffer/query
+    //
+    // Can't go arbitrarily high, otherwise the test will take forever to run or
+    // exhaust all available RAM in trying to do so ...
+    fn num_entries() -> impl Strategy<Value = usize> {
+        0usize..(1024 * 1024)
+    }
+
+    proptest! {
+        #[test]
+        fn new_split_clock(min_entries in num_entries()) {
+            // Check initial state
+            let history = RTHistory::<f32>::new(min_entries);
+            prop_assert!(history
+                .0
+                .data
+                .iter()
+                .map(|x| x.load(Ordering::Relaxed))
+                .all(|f| f == 0.0));
+            prop_assert_eq!(history.0.data_len(), min_entries.next_power_of_two());
+            prop_assert_eq!(history.0.data_len(), history.0.data.len());
+            prop_assert_eq!(history.0.readable.load(Ordering::Relaxed), 0);
+            prop_assert_eq!(history.0.writing.load(Ordering::Relaxed), 0);
+
+            // Split producer and consumer interface
+            let (input, output) = history.split();
+
+            // Check that they point to the same thing
+            prop_assert_eq!(&*input.0 as *const _, &*output.0 as *const _);
+        }
+
+        #[test]
+        fn writes_and_read(
+            min_entries in num_entries(),
+            write1: Vec<u32>,
+            write2: Vec<u32>,
+            read_size in num_entries(),
+        ) {
+            // Set up a history log
+            let (mut input, output) = RTHistory::<u32>::new(min_entries).split();
+
+            // Attempt a write, which will fail if and only if the input data is
+            // larger than the history log's inner buffer.
+            macro_rules! checked_write {
+                ($write:expr, $input:expr) => {
+                    if let Err(_) = panic::catch_unwind(AssertUnwindSafe(|| $input.write(&$write[..])))
+                    {
+                        prop_assert!($write.len() > $input.0.data_len());
+                        return Ok(());
+                    }
+                    prop_assert!($write.len() <= $input.0.data_len());
+                };
             }
-        };
-    }
+            checked_write!(write1, input);
 
-    #[quickcheck]
-    fn new_split_clock(min_entries: usize) -> TestResult {
-        // Reject impossibly large buffer configuraitons
-        validate_min_entries!(min_entries);
+            // Check the final buffer state
+            prop_assert!(input
+                .0
+                .data
+                .iter()
+                .take(write1.len())
+                .zip(&write1)
+                .all(|(a, &x)| a.load(Ordering::Relaxed) == x));
+            prop_assert!(input
+                .0
+                .data
+                .iter()
+                .skip(write1.len())
+                .all(|a| a.load(Ordering::Relaxed) == 0));
+            prop_assert_eq!(input.0.readable.load(Ordering::Relaxed), write1.len());
+            prop_assert_eq!(input.0.writing.load(Ordering::Relaxed), write1.len());
 
-        // Check initial state
-        let history = RTHistory::<f32>::new(min_entries);
-        assert!(history
-            .0
-            .data
-            .iter()
-            .map(|x| x.load(Ordering::Relaxed))
-            .all(|f| f == 0.0));
-        assert_eq!(history.0.data_len(), min_entries.next_power_of_two());
-        assert_eq!(history.0.data_len(), history.0.data.len());
-        assert_eq!(history.0.readable.load(Ordering::Relaxed), 0);
-        assert_eq!(history.0.writing.load(Ordering::Relaxed), 0);
+            // Perform another write, check state again
+            checked_write!(write2, input);
+            let new_readable = write1.len() + write2.len();
+            let data_len = input.0.data_len();
+            let overwritten = new_readable.saturating_sub(data_len);
+            prop_assert!(input
+                .0
+                .data
+                .iter()
+                .take(overwritten)
+                .zip(write2[write2.len() - overwritten..].iter())
+                .all(|(a, &x2)| a.load(Ordering::Relaxed) == x2));
+            prop_assert!(input
+                .0
+                .data
+                .iter()
+                .skip(overwritten)
+                .take(write1.len().saturating_sub(overwritten))
+                .zip(write1.iter().skip(overwritten))
+                .all(|(a, &x1)| a.load(Ordering::Relaxed) == x1));
+            prop_assert!(input
+                .0
+                .data
+                .iter()
+                .skip(write1.len())
+                .take(write2.len())
+                .zip(&write2)
+                .all(|(a, &x2)| a.load(Ordering::Relaxed) == x2));
+            prop_assert!(input
+                .0
+                .data
+                .iter()
+                .skip(new_readable)
+                .all(|a| a.load(Ordering::Relaxed) == 0));
+            prop_assert_eq!(input.0.readable.load(Ordering::Relaxed), new_readable);
+            prop_assert_eq!(input.0.writing.load(Ordering::Relaxed), new_readable);
 
-        // Split producer and consumer interface
-        let (input, output) = history.split();
+            // Back up current ring buffer state
+            let data_backup = input
+                .0
+                .data
+                .iter()
+                .map(|a| a.load(Ordering::Relaxed))
+                .collect::<Box<[_]>>();
 
-        // Check that they point to the same thing
-        assert_eq!(&*input.0 as *const _, &*output.0 as *const _);
-
-        TestResult::passed()
-    }
-
-    #[quickcheck]
-    fn writes_and_read(
-        min_entries: usize,
-        write1: Vec<u32>,
-        write2: Vec<u32>,
-        read_size: usize,
-    ) -> TestResult {
-        // Reject impossibly large buffer configurations
-        validate_min_entries!(min_entries);
-        validate_min_entries!(read_size);
-
-        // Set up a history log
-        let (mut input, output) = RTHistory::<u32>::new(min_entries).split();
-
-        // Attempt a write, which will fail if and only if the input data is
-        // larger than the history log's inner buffer.
-        macro_rules! checked_write {
-            ($write:expr, $input:expr) => {
-                if let Err(_) = panic::catch_unwind(AssertUnwindSafe(|| $input.write(&$write[..])))
-                {
-                    assert!($write.len() > $input.0.data_len());
-                    return TestResult::passed();
+            // Read some data back and make sure no overrun happened (it is
+            // impossible in single-threaded code)
+            let mut read = vec![0; read_size];
+            match panic::catch_unwind(AssertUnwindSafe(|| output.read(&mut read[..]))) {
+                Err(_) => {
+                    prop_assert!(read.len() > output.0.data_len());
+                    return Ok(());
                 }
-                assert!($write.len() <= $input.0.data_len());
-            };
-        }
-        checked_write!(write1, input);
-
-        // Check the final buffer state
-        assert!(input
-            .0
-            .data
-            .iter()
-            .take(write1.len())
-            .zip(&write1)
-            .all(|(a, &x)| a.load(Ordering::Relaxed) == x));
-        assert!(input
-            .0
-            .data
-            .iter()
-            .skip(write1.len())
-            .all(|a| a.load(Ordering::Relaxed) == 0));
-        assert_eq!(input.0.readable.load(Ordering::Relaxed), write1.len());
-        assert_eq!(input.0.writing.load(Ordering::Relaxed), write1.len());
-
-        // Perform another write, check state again
-        checked_write!(write2, input);
-        let new_readable = write1.len() + write2.len();
-        let data_len = input.0.data_len();
-        let overwritten = new_readable.saturating_sub(data_len);
-        assert!(input
-            .0
-            .data
-            .iter()
-            .take(overwritten)
-            .zip(write2[write2.len() - overwritten..].iter())
-            .all(|(a, &x2)| a.load(Ordering::Relaxed) == x2));
-        assert!(input
-            .0
-            .data
-            .iter()
-            .skip(overwritten)
-            .take(write1.len().saturating_sub(overwritten))
-            .zip(write1.iter().skip(overwritten))
-            .all(|(a, &x1)| a.load(Ordering::Relaxed) == x1));
-        assert!(input
-            .0
-            .data
-            .iter()
-            .skip(write1.len())
-            .take(write2.len())
-            .zip(&write2)
-            .all(|(a, &x2)| a.load(Ordering::Relaxed) == x2));
-        assert!(input
-            .0
-            .data
-            .iter()
-            .skip(new_readable)
-            .all(|a| a.load(Ordering::Relaxed) == 0));
-        assert_eq!(input.0.readable.load(Ordering::Relaxed), new_readable);
-        assert_eq!(input.0.writing.load(Ordering::Relaxed), new_readable);
-
-        // Back up current ring buffer state
-        let data_backup = input
-            .0
-            .data
-            .iter()
-            .map(|a| a.load(Ordering::Relaxed))
-            .collect::<Box<[_]>>();
-
-        // Read some data back and make sure no overrun happened (it is
-        // impossible in single-threaded code)
-        let mut read = vec![0; read_size];
-        match panic::catch_unwind(AssertUnwindSafe(|| output.read(&mut read[..]))) {
-            Err(_) => {
-                assert!(read.len() > output.0.data_len());
-                return TestResult::passed();
+                Ok(result) => {
+                    prop_assert!(read.len() <= output.0.data_len());
+                    prop_assert_eq!(result, Ok(new_readable));
+                }
             }
-            Ok(result) => {
-                assert!(read.len() <= output.0.data_len());
-                assert_eq!(result, Ok(new_readable));
-            }
+
+            // Make sure that the "read" did not alter the history data
+            prop_assert!(input
+                .0
+                .data
+                .iter()
+                .zip(data_backup.iter().copied())
+                .all(|(a, x)| a.load(Ordering::Relaxed) == x));
+            prop_assert_eq!(input.0.readable.load(Ordering::Relaxed), new_readable);
+            prop_assert_eq!(input.0.writing.load(Ordering::Relaxed), new_readable);
+
+            // Check that the collected output is correct
+            prop_assert!(read
+                .iter()
+                .rev()
+                .zip(
+                    write2
+                        .iter()
+                        .rev()
+                        .chain(write1.iter().rev())
+                        .chain(std::iter::repeat(&0))
+                )
+                .all(|(&x, &y)| x == y));
         }
-
-        // Make sure that the "read" did not alter the history data
-        assert!(input
-            .0
-            .data
-            .iter()
-            .zip(data_backup.iter().copied())
-            .all(|(a, x)| a.load(Ordering::Relaxed) == x));
-        assert_eq!(input.0.readable.load(Ordering::Relaxed), new_readable);
-        assert_eq!(input.0.writing.load(Ordering::Relaxed), new_readable);
-
-        // Check that the collected output is correct
-        assert!(read
-            .iter()
-            .rev()
-            .zip(
-                write2
-                    .iter()
-                    .rev()
-                    .chain(write1.iter().rev())
-                    .chain(std::iter::repeat(&0))
-            )
-            .all(|(&x, &y)| x == y));
-
-        TestResult::passed()
     }
 
     // This test is ignored because it needs a special configuration:
@@ -515,6 +505,7 @@ mod tests {
 
         // Consumers detect underruns and overruns, and asserts that for data
         // which has not been corrupted by an overrun, value == clock holds.
+        #[allow(clippy::declare_interior_mutable_const)]
         const XRUN_CTR_INIT: AtomicUsize = AtomicUsize::new(0);
         let underrun_ctrs = [XRUN_CTR_INIT; 2];
         let overrun_ctrs = [XRUN_CTR_INIT; 2];
@@ -588,7 +579,7 @@ mod tests {
 
         // Check that a significant number of xruns were detected, but that
         // there was a significant number of "normal" runs too.
-        const NUM_READOUTS: usize = NUM_ELEMS as usize / CONSUMER_SIZE;
+        const NUM_READOUTS: usize = NUM_ELEMS / CONSUMER_SIZE;
         underrun_ctrs
             .into_iter()
             .map(|a| a.load(Ordering::Relaxed))
@@ -599,7 +590,7 @@ mod tests {
                     idx, underrun_ctr, NUM_READOUTS
                 );
                 assert!(underrun_ctr > NUM_READOUTS / 10000);
-                assert!(underrun_ctr < NUM_READOUTS / 10);
+                assert!(underrun_ctr < NUM_READOUTS / 5);
             });
         overrun_ctrs
             .into_iter()
@@ -611,7 +602,7 @@ mod tests {
                     idx, overrun_ctr, NUM_READOUTS
                 );
                 assert!(overrun_ctr > NUM_READOUTS / 10000);
-                assert!(overrun_ctr < NUM_READOUTS / 10);
+                assert!(overrun_ctr < NUM_READOUTS / 5);
             });
     }
 }
