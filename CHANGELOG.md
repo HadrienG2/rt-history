@@ -10,7 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- Bumped MRSV to 1.70 owing to new dependency requirements.
+- Bumped MRSV to 1.74 owing to new dependency requirements.
 
 
 ## [3.0.0] - 2023-07-31

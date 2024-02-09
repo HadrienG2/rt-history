@@ -4,7 +4,8 @@
 [![On crates.io](https://img.shields.io/crates/v/rt-history.svg)](https://crates.io/crates/rt-history)
 [![On docs.rs](https://docs.rs/rt-history/badge.svg)](https://docs.rs/rt-history/)
 [![Continuous Integration](https://img.shields.io/github/actions/workflow/status/HadrienG2/rt-history/ci.yml?branch=master)](https://github.com/HadrienG2/rt-history/actions?query=workflow%3A%22Continuous+Integration%22)
-![Requires rustc 1.70.0+](https://img.shields.io/badge/rustc-1.70.0+-lightgray.svg)
+![Requires rustc
+1.74.0+](https://img.shields.io/badge/rustc-1.74.0+-lightgray.svg)
 
 This is a bounded wait-free thread synchronization primitive which allows
 you to record the time evolution of some data on one thread and be able to
