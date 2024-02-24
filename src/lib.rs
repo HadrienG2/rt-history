@@ -34,7 +34,7 @@
 
 #![deny(missing_docs)]
 
-use atomic::{self, Atomic, Ordering};
+use atomic::{Atomic, Ordering};
 use bytemuck::NoUninit;
 use std::sync::Arc;
 use thiserror::Error;
