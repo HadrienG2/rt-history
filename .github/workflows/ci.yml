@@ -34,7 +34,7 @@ jobs:
         run: echo "MINIMAL_RUST=${{ env.MINIMAL_RUST }}" >> $GITHUB_OUTPUT
 
 
-  # Format doesn't depend on configuraiton, and lints don't depend on the
+  # Format doesn't depend on configuration, and lints don't depend on the
   # operating system since there's no OS-specific code path in this crate.
   #
   # We don't care about warnings on the minimum supported Rust version, only
@@ -68,7 +68,29 @@ jobs:
       - name: Check clippy lints
         run: cargo clippy --workspace --all-targets -- -D warnings
 
-      - name: Check semver
+      - name: Check semver (push/PR version)
+        # Not guaranteed to run on nightly, so we use the separate job below
+        if: github.event_name != 'schedule'
+        uses: obi1kenobi/cargo-semver-checks-action@v2
+        with:
+          rust-toolchain: manual
+
+  # Workaround for cargo-semver-checks not guaranteeing nightly support
+  scheduled-semver-checks:
+    if: github.event_name == 'schedule'
+
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+
+      - name: Set up stable toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          components: rustfmt,clippy
+
+      - name: Check semver (scheduled version)
         uses: obi1kenobi/cargo-semver-checks-action@v2
         with:
           rust-toolchain: manual
