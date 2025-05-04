@@ -48,7 +48,7 @@ _No unreleased changes in the pipeline at the moment
 
 
 [Unreleased]: https://github.com/HadrienG2/rt-history/compare/v4.0.0...HEAD
-[3.0.1]: https://github.com/HadrienG2/rt-history/compare/v3.0.0...v4.0.0
+[4.0.0]: https://github.com/HadrienG2/rt-history/compare/v3.0.0...v4.0.0
 [3.0.0]: https://github.com/HadrienG2/rt-history/compare/v2.0.0...v3.0.0
 [2.0.0]: https://github.com/HadrienG2/rt-history/compare/v1.0.0...v2.0.0
 [1.0.0]: https://github.com/HadrienG2/rt-history/releases/tag/v1.0.0
