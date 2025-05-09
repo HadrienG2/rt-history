@@ -585,10 +585,7 @@ mod tests {
             .map(|a| a.load(Ordering::Relaxed))
             .enumerate()
             .for_each(|(idx, underrun_ctr)| {
-                println!(
-                    "consumer {}: {}/{} underruns",
-                    idx, underrun_ctr, NUM_READOUTS
-                );
+                println!("consumer {idx}: {underrun_ctr}/{NUM_READOUTS} underruns");
                 assert!(underrun_ctr > NUM_READOUTS / 10000);
                 assert!(underrun_ctr < NUM_READOUTS / 5);
             });
@@ -597,10 +594,7 @@ mod tests {
             .map(|a| a.load(Ordering::Relaxed))
             .enumerate()
             .for_each(|(idx, overrun_ctr)| {
-                println!(
-                    "consumer {}: {}/{} overruns",
-                    idx, overrun_ctr, NUM_READOUTS
-                );
+                println!("consumer {idx}: {overrun_ctr}/{NUM_READOUTS} overruns");
                 assert!(overrun_ctr > NUM_READOUTS / 10000);
                 assert!(overrun_ctr < NUM_READOUTS / 5);
             });
