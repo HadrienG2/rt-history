@@ -30,7 +30,7 @@ bytemuck = "1.23.1"
 thiserror = "2.0"
 
 [dev-dependencies]
-criterion = { version = "0.5", default-features = false }
+criterion = { version = "0.7", default-features = false }
 proptest = "1.7"
 testbench = "1.0"
 
