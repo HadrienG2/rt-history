@@ -158,7 +158,9 @@ pub type Clock = usize;
 /// decreasing preference.
 ///
 #[derive(Clone, Copy, Debug, Error, PartialEq, Eq)]
-#[error("A buffer overrun occured while reading history of entry {clock}, writer overwrote {excess_entries} entries")]
+#[error(
+    "A buffer overrun occured while reading history of entry {clock}, writer overwrote {excess_entries} entries"
+)]
 pub struct Overrun {
     /// Number of entries that were fully written by the producer at the time
     /// where the consumer started reading out data
